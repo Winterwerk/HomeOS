@@ -1,16 +1,47 @@
 'use strict';
 const KEY='home-os-v1',zones=['Kühlschrank','Gefrierschrank','Regal'],$=id=>document.getElementById(id);
 let db={stock:[],shopping:[]};try{const s=JSON.parse(localStorage.getItem(KEY));if(s){db.stock=Array.isArray(s.stock)?s.stock:[];db.shopping=Array.isArray(s.shopping)?s.shopping:[]}}catch{}
-let tab='lager',selected='Kühlschrank',editing=null;
+let tab='lager',selected='Kühlschrank',editing=null,transferring=null;
 const uid=()=>crypto.randomUUID?crypto.randomUUID():String(Date.now()+Math.random());
 const esc=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt=x=>Number(x).toLocaleString('de-DE',{maximumFractionDigits:3});
 function save(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch{alert('Speichern fehlgeschlagen.')}render()}
-function switchTab(t){tab=t;$('lagerView').hidden=t!=='lager';$('einkaufView').hidden=t!=='einkauf';$('pageTitle').textContent=t==='lager'?'Lagerverwaltung':'Beschaffung';$('pageSub').textContent=t==='lager'?'Bestandskontrolle und Lagerplatzverwaltung':'Einkaufsplanung und Wareneingang';$('breadcrumb').textContent=t==='lager'?'INVENTORY MANAGEMENT':'PROCUREMENT';$('addBtn').textContent=t==='lager'?'+ ARTIKEL ERFASSEN':'+ EINKAUF HINZUFÜGEN';document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));render()}
+function switchTab(t){tab=t;$('lagerView').hidden=t!=='lager';$('einkaufView').hidden=t!=='einkauf';$('pageTitle').textContent=t==='lager'?'Lagerverwaltung':'Beschaffung';$('pageSub').textContent=t==='lager'?'Bestandskontrolle und Lagerplatzverwaltung':'Einkaufsplanung und Wareneingang';$('breadcrumb').textContent=t==='lager'?'INVENTORY MANAGEMENT':'PROCUREMENT';$('addBtn').textContent=t==='lager'?'+ ARTIKEL ERFASSEN':'+ EINKAUF HINZUFÜGEN';function openTransfer(item){
+ if(Number(item.qty)<=0){alert('Für diesen Artikel ist kein Bestand verfügbar.');return;}
+ transferring=item.id;
+ $('transferName').textContent=item.name;
+ $('transferAvailable').textContent='Verfügbar: '+fmt(item.qty)+' '+item.unit;
+ $('transferSource').value=item.zone;
+ $('transferDestination').value=zones.find(z=>z!==item.zone);
+ $('transferQuantity').value=item.qty;
+ $('transferQuantity').max=item.qty;
+ $('transferDialog').showModal();
+}
+$('closeTransfer').addEventListener('click',()=>$('transferDialog').close());
+$('transferDialog').addEventListener('close',()=>{transferring=null});
+$('transferForm').addEventListener('submit',e=>{
+ e.preventDefault();
+ const item=db.stock.find(x=>x.id===transferring);
+ if(!item){alert('Artikel nicht gefunden.');return;}
+ const dest=$('transferDestination').value;
+ const amount=Number($('transferQuantity').value);
+ const available=Number(item.qty);
+ if(!zones.includes(dest)||dest===item.zone){alert('Bitte einen anderen Lagerort wählen.');return;}
+ if(!Number.isFinite(amount)||amount<=0||amount>available||Math.round(amount*1000)!==amount*1000){alert('Bitte eine gültige Menge (maximal drei Nachkommastellen) bis zum verfügbaren Bestand eingeben.');return;}
+ const moved=Math.round(amount*1000)/1000;
+ const existing=db.stock.find(x=>x.id!==item.id&&x.zone===dest&&x.unit===item.unit&&x.name.trim().toLocaleLowerCase('de-DE')===item.name.trim().toLocaleLowerCase('de-DE'));
+ if(existing)existing.qty=Math.round((Number(existing.qty)+moved)*1000)/1000;
+ else db.stock.push({id:uid(),name:item.name,qty:moved,unit:item.unit,zone:dest});
+ item.qty=Math.max(0,Math.round((available-moved)*1000)/1000);
+ if(item.qty===0)db.stock=db.stock.filter(x=>x.id!==item.id);
+ $('transferDialog').close();
+ save();
+});
+document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));render()}
 function render(){
 $('total').textContent=String(db.stock.length).padStart(2,'0');$('zero').textContent=String(db.stock.filter(x=>Number(x.qty)===0).length).padStart(2,'0');zones.forEach(z=>$('c-'+z).textContent=db.stock.filter(x=>x.zone===z).length);$('zoneLabel').textContent=selected.toUpperCase();
 const q=$('search').value.trim().toLowerCase(),list=db.stock.filter(x=>x.zone===selected&&String(x.name).toLowerCase().includes(q));$('resultCount').textContent=list.length+' Positionen';
-$('stockRows').innerHTML=list.length?list.map((x,i)=>`<tr><td><span class="itemname">${esc(x.name)}</span><span class="sku">SKU-${String(i+1).padStart(4,'0')} · ${esc(x.zone)}</span></td><td><span class="qty">${fmt(x.qty)} ${esc(x.unit)}</span></td><td><span class="tag ${Number(x.qty)===0?'zero':''}">${Number(x.qty)===0?'LEER':'VERFÜGBAR'}</span></td><td><div class="actions"><button class="mini" data-a="minus" data-id="${esc(x.id)}" aria-label="Reduzieren">−</button><button class="mini" data-a="plus" data-id="${esc(x.id)}" aria-label="Erhöhen">+</button><button class="mini" data-a="edit" data-id="${esc(x.id)}" aria-label="Bearbeiten">✎</button><button class="mini danger" data-a="delete" data-id="${esc(x.id)}" aria-label="Löschen">×</button></div></td></tr>`).join(''):'<tr><td colspan="4" class="empty">Keine Artikel in dieser Lagerzone erfasst.</td></tr>';
+$('stockRows').innerHTML=list.length?list.map((x,i)=>`<tr><td><span class="itemname">${esc(x.name)}</span><span class="sku">SKU-${String(i+1).padStart(4,'0')} · ${esc(x.zone)}</span></td><td><span class="qty">${fmt(x.qty)} ${esc(x.unit)}</span></td><td><span class="tag ${Number(x.qty)===0?'zero':''}">${Number(x.qty)===0?'LEER':'VERFÜGBAR'}</span></td><td><div class="actions"><button class="mini" data-a="minus" data-id="${esc(x.id)}" aria-label="Reduzieren">−</button><button class="mini" data-a="plus" data-id="${esc(x.id)}" aria-label="Erhöhen">+</button><button class="mini transfer" data-a="transfer" data-id="${esc(x.id)}" title="Umlagern" aria-label="Umlagern">⇄</button><button class="mini" data-a="edit" data-id="${esc(x.id)}" aria-label="Bearbeiten">✎</button><button class="mini danger" data-a="delete" data-id="${esc(x.id)}" aria-label="Löschen">×</button></div></td></tr>`).join(''):'<tr><td colspan="4" class="empty">Keine Artikel in dieser Lagerzone erfasst.</td></tr>';
 const open=db.shopping.filter(x=>!x.done).length;$('openCount').textContent=String(open).padStart(2,'0');$('doneCount').textContent=String(db.shopping.length-open).padStart(2,'0');$('shopTotal').textContent=String(db.shopping.length).padStart(2,'0');
 $('shopRows').innerHTML=db.shopping.length?db.shopping.map(x=>`<div class="shop-row ${x.done?'done':''}"><input type="checkbox" data-a="toggle" data-id="${esc(x.id)}" ${x.done?'checked':''} aria-label="${esc(x.name)} gekauft"><div class="shop-info"><b>${esc(x.name)}</b><small>${fmt(x.qty)} ${esc(x.unit)}</small></div>${x.done?`<button class="mini" data-a="store" data-id="${esc(x.id)}" title="Ins Lager übernehmen">↥</button>`:''}<button class="mini" data-a="editshop" data-id="${esc(x.id)}" aria-label="Bearbeiten">✎</button><button class="mini danger" data-a="deleteshop" data-id="${esc(x.id)}" aria-label="Löschen">×</button></div>`).join(''):'<div class="empty">Noch keine Einkäufe erfasst.</div>';
 }
@@ -19,7 +50,7 @@ document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()
 document.querySelectorAll('[data-zone]').forEach(b=>b.addEventListener('click',()=>{selected=b.dataset.zone;document.querySelectorAll('[data-zone]').forEach(n=>n.classList.toggle('active',n===b));render()}));
 $('search').addEventListener('input',render);$('addBtn').addEventListener('click',()=>editor());$('close').addEventListener('click',()=>$('editor').close());
 $('itemForm').addEventListener('submit',e=>{e.preventDefault();const name=$('name').value.trim(),qty=Number($('quantity').value),t=e.currentTarget.dataset.target;if(!name||!Number.isFinite(qty)||qty<0)return;const arr=t==='lager'?db.stock:db.shopping,old=arr.find(x=>x.id===editing),values={name,qty:Math.round(qty*1000)/1000,unit:$('unit').value};if(t==='lager')values.zone=$('zone').value;if(old)Object.assign(old,values);else arr.push({id:uid(),...values,...(t==='einkauf'?{done:false}:{})});$('editor').close();save()});
-$('stockRows').addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!b)return;const x=db.stock.find(n=>String(n.id)===b.dataset.id);if(!x)return;const a=b.dataset.a;if(a==='edit')return editor('lager',x);if(a==='delete'){if(!confirm('Artikel löschen?'))return;db.stock=db.stock.filter(n=>n.id!==x.id)}if(a==='minus'||a==='plus'){const step=['kg','Liter'].includes(x.unit)?0.5:['g','ml'].includes(x.unit)?100:1;x.qty=Math.max(0,Math.round((Number(x.qty)+(a==='plus'?step:-step))*1000)/1000)}save()});
+$('stockRows').addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!b)return;const x=db.stock.find(n=>String(n.id)===b.dataset.id);if(!x)return;const a=b.dataset.a;if(a==='transfer')return openTransfer(x);if(a==='edit')return editor('lager',x);if(a==='delete'){if(!confirm('Artikel löschen?'))return;db.stock=db.stock.filter(n=>n.id!==x.id)}if(a==='minus'||a==='plus'){const step=['kg','Liter'].includes(x.unit)?0.5:['g','ml'].includes(x.unit)?100:1;x.qty=Math.max(0,Math.round((Number(x.qty)+(a==='plus'?step:-step))*1000)/1000)}save()});
 $('shopRows').addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!b)return;const x=db.shopping.find(n=>String(n.id)===b.dataset.id);if(!x)return;const a=b.dataset.a;if(a==='editshop')return editor('einkauf',x);if(a==='deleteshop')db.shopping=db.shopping.filter(n=>n.id!==x.id);if(a==='store'){const choice=prompt('Lagerzone: Kühlschrank, Gefrierschrank oder Regal',selected);if(choice===null)return;const dest=zones.find(z=>z.toLowerCase()===choice.trim().toLowerCase());if(!dest){alert('Ungültige Lagerzone');return}const existing=db.stock.find(n=>n.zone===dest&&n.unit===x.unit&&n.name.toLowerCase()===x.name.toLowerCase());if(existing)existing.qty=Number(existing.qty)+Number(x.qty);else db.stock.push({id:uid(),name:x.name,qty:x.qty,unit:x.unit,zone:dest});db.shopping=db.shopping.filter(n=>n.id!==x.id)}save()});
 $('shopRows').addEventListener('change',e=>{const b=e.target;if(b.dataset.a!=='toggle')return;const x=db.shopping.find(n=>String(n.id)===b.dataset.id);if(x){x.done=b.checked;save()}});
 render();
