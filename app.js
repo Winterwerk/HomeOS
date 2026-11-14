@@ -6,7 +6,8 @@ const uid=()=>crypto.randomUUID?crypto.randomUUID():String(Date.now()+Math.rando
 const esc=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt=x=>Number(x).toLocaleString('de-DE',{maximumFractionDigits:3});
 function save(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch{alert('Speichern fehlgeschlagen.')}render()}
-function switchTab(t){tab=t;$('lagerView').hidden=t!=='lager';$('einkaufView').hidden=t!=='einkauf';$('pageTitle').textContent=t==='lager'?'Lagerverwaltung':'Beschaffung';$('pageSub').textContent=t==='lager'?'Bestandskontrolle und Lagerplatzverwaltung':'Einkaufsplanung und Wareneingang';$('breadcrumb').textContent=t==='lager'?'INVENTORY MANAGEMENT':'PROCUREMENT';$('addBtn').textContent=t==='lager'?'+ ARTIKEL ERFASSEN':'+ EINKAUF HINZUFÜGEN';function openTransfer(item){
+function switchTab(t){tab=t;$('lagerView').hidden=t!=='lager';$('einkaufView').hidden=t!=='einkauf';$('pageTitle').textContent=t==='lager'?'Lagerverwaltung':'Beschaffung';$('pageSub').textContent=t==='lager'?'Bestandskontrolle und Lagerplatzverwaltung':'Einkaufsplanung und Wareneingang';$('breadcrumb').textContent=t==='lager'?'INVENTORY MANAGEMENT':'PROCUREMENT';$('addBtn').textContent=t==='lager'?'+ ARTIKEL ERFASSEN':'+ EINKAUF HINZUFÜGEN';document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));render()}
+function openTransfer(item){
  if(Number(item.qty)<=0){alert('Für diesen Artikel ist kein Bestand verfügbar.');return;}
  transferring=item.id;
  $('transferName').textContent=item.name;
@@ -37,7 +38,7 @@ $('transferForm').addEventListener('submit',e=>{
  $('transferDialog').close();
  save();
 });
-document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));render()}
+
 function render(){
 $('total').textContent=String(db.stock.length).padStart(2,'0');$('zero').textContent=String(db.stock.filter(x=>Number(x.qty)===0).length).padStart(2,'0');zones.forEach(z=>$('c-'+z).textContent=db.stock.filter(x=>x.zone===z).length);$('zoneLabel').textContent=selected.toUpperCase();
 const q=$('search').value.trim().toLowerCase(),list=db.stock.filter(x=>x.zone===selected&&String(x.name).toLowerCase().includes(q));$('resultCount').textContent=list.length+' Positionen';
@@ -53,4 +54,34 @@ $('itemForm').addEventListener('submit',e=>{e.preventDefault();const name=$('nam
 $('stockRows').addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!b)return;const x=db.stock.find(n=>String(n.id)===b.dataset.id);if(!x)return;const a=b.dataset.a;if(a==='transfer')return openTransfer(x);if(a==='edit')return editor('lager',x);if(a==='delete'){if(!confirm('Artikel löschen?'))return;db.stock=db.stock.filter(n=>n.id!==x.id)}if(a==='minus'||a==='plus'){const step=['kg','Liter'].includes(x.unit)?0.5:['g','ml'].includes(x.unit)?100:1;x.qty=Math.max(0,Math.round((Number(x.qty)+(a==='plus'?step:-step))*1000)/1000)}save()});
 $('shopRows').addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!b)return;const x=db.shopping.find(n=>String(n.id)===b.dataset.id);if(!x)return;const a=b.dataset.a;if(a==='editshop')return editor('einkauf',x);if(a==='deleteshop')db.shopping=db.shopping.filter(n=>n.id!==x.id);if(a==='store'){const choice=prompt('Lagerzone: Kühlschrank, Gefrierschrank oder Regal',selected);if(choice===null)return;const dest=zones.find(z=>z.toLowerCase()===choice.trim().toLowerCase());if(!dest){alert('Ungültige Lagerzone');return}const existing=db.stock.find(n=>n.zone===dest&&n.unit===x.unit&&n.name.toLowerCase()===x.name.toLowerCase());if(existing)existing.qty=Number(existing.qty)+Number(x.qty);else db.stock.push({id:uid(),name:x.name,qty:x.qty,unit:x.unit,zone:dest});db.shopping=db.shopping.filter(n=>n.id!==x.id)}save()});
 $('shopRows').addEventListener('change',e=>{const b=e.target;if(b.dataset.a!=='toggle')return;const x=db.shopping.find(n=>String(n.id)===b.dataset.id);if(x){x.done=b.checked;save()}});
+
+let batchItems=[];
+const wordNumbers={ein:1,eine:1,einen:1,einem:1,eins:1,zwei:2,drei:3,vier:4,fünf:5,sechs:6,sieben:7,acht:8,neun:9,zehn:10,elf:11,zwölf:12};
+function parseBatch(raw){
+ const normalized=raw.replace(/\s+(?:und|sowie)\s+/gi,', ').replace(/[;\n]+/g,',');
+ return normalized.split(',').map(chunk=>{
+  let s=chunk.trim().replace(/^[•\-\s]+/,'');if(!s)return null;
+  let match=s.match(/^(\d+(?:[.,]\d+)?|ein(?:e|en|em)?|eins|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf)\s*(ml|milliliter|l|liter|kg|kilogramm|g|gramm|stück|stk\.?|packung(?:en)?|paket(?:e)?|flasche(?:n)?|dose(?:n)?)?\s+(.+)$/i);
+  let qty=1,unit='Stück',name=s;
+  if(match){qty=wordNumbers[match[1].toLowerCase()]??Number(match[1].replace(',','.'));let u=(match[2]||'').toLowerCase();unit=/^(ml|milliliter)$/.test(u)?'ml':/^(l|liter)$/.test(u)?'Liter':/^(kg|kilogramm)$/.test(u)?'kg':/^(g|gramm)$/.test(u)?'g':/^(packung|packungen|paket|pakete)$/.test(u)?'Packungen':'Stück';name=match[3].trim()}
+  if(!Number.isFinite(qty)||qty<=0)return null;
+  name=name.replace(/^(?:an|von)\s+/i,'').trim();
+  return name?{id:uid(),name,qty,unit,zone:selected}:null;
+ }).filter(Boolean);
+}
+function showBatch(){batchItems=[];$('batchText').value='';$('batchRows').innerHTML='';$('batchCount').textContent='0 Artikel';$('batchDialog').showModal()}
+function drawBatch(){
+ $('batchCount').textContent=batchItems.length+' Artikel';
+ $('batchRows').innerHTML=batchItems.map((x,i)=>`<div class="batch-row" data-index="${i}"><div class="batch-fields"><label>ARTIKEL<input class="batch-name" value="${esc(x.name)}" aria-label="Artikelname"></label><label>MENGE<input class="batch-qty" type="number" step="any" min="0.001" inputmode="decimal" value="${x.qty}" aria-label="Menge"></label><label>EINHEIT<select class="batch-unit" aria-label="Einheit">${['Stück','g','kg','ml','Liter','Packungen'].map(u=>`<option ${u===x.unit?'selected':''}>${u}</option>`).join('')}</select></label></div><div class="batch-zone"><label>LAGERORT<select class="batch-location" aria-label="Lagerort">${zones.map(z=>`<option ${z===x.zone?'selected':''}>${z}</option>`).join('')}</select></label><button class="mini danger" type="button" data-remove="${i}" aria-label="Artikel entfernen">×</button></div></div>`).join('');
+}
+$('openBatch').addEventListener('click',showBatch);
+$('closeBatch').addEventListener('click',()=>$('batchDialog').close());
+$('parseBatch').addEventListener('click',()=>{const parsed=parseBatch($('batchText').value);if(!parsed.length){alert('Keine Artikel erkannt. Bitte Einträge mit Kommas trennen, z. B. 500 ml Milch, 3 Eier.');return;}batchItems=parsed;drawBatch()});
+$('batchRows').addEventListener('click',e=>{let b=e.target.closest('[data-remove]');if(!b)return;syncBatch();batchItems.splice(Number(b.dataset.remove),1);drawBatch()});
+function syncBatch(){document.querySelectorAll('#batchRows .batch-row').forEach(row=>{let x=batchItems[Number(row.dataset.index)];if(!x)return;x.name=row.querySelector('.batch-name').value.trim();x.qty=Number(row.querySelector('.batch-qty').value);x.unit=row.querySelector('.batch-unit').value;x.zone=row.querySelector('.batch-location').value})}
+$('batchForm').addEventListener('submit',e=>{e.preventDefault();syncBatch();if(!batchItems.length){alert('Bitte zuerst Artikel erkennen lassen.');return}if(batchItems.some(x=>!x.name||!Number.isFinite(x.qty)||x.qty<=0||!zones.includes(x.zone))){alert('Bitte Artikel und Mengen prüfen.');return}
+ for(const x of batchItems){let existing=db.stock.find(y=>y.zone===x.zone&&y.unit===x.unit&&y.name.trim().toLocaleLowerCase('de-DE')===x.name.trim().toLocaleLowerCase('de-DE'));if(existing)existing.qty=Math.round((Number(existing.qty)+x.qty)*1000)/1000;else db.stock.push({id:uid(),name:x.name,qty:Math.round(x.qty*1000)/1000,unit:x.unit,zone:x.zone})}
+ $('batchDialog').close();save();alert(batchItems.length+' Artikel eingelagert.');batchItems=[];
+});
+
 render();
